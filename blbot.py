@@ -5,7 +5,7 @@ from twisted.python import log
 from twisted.words.protocols import irc
 from twisted.internet import task, reactor, protocol, ssl
 
-import local_config as cfg
+import settings as cfg
 
 has_gpio = False
 try:
