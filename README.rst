@@ -29,5 +29,5 @@ Requirements:
 
 
 Usage:
- - edit the configuration in `local_config.py`.
+ - copy `settings.py` to `local_settings.py` and edit according to your needs
  - run as `python blbot.py` (in screen with tee for best performance)
