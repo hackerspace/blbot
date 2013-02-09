@@ -23,3 +23,8 @@ PASSWORD = ''
 SERVER = 'irc.freenode.net'
 PORT = 7070
 SSL = True
+
+try:
+    execfile('local_settings.py')
+except:
+    pass
