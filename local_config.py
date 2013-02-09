@@ -11,6 +11,8 @@ POLL_INTERVAL = 5.0
 HW_POLL_INTERVAL = 0.7
 TOPIC_INTERVAL = 60.0
 
+REPLACE_THRESHOLD = 5
+
 GPIO_IN_PIN = 11 # switch, internal pull-down enabled
 GPIO_OUT_PIN = 7 # led
 

@@ -33,6 +33,14 @@ def gpio_cleanup():
         return
     GPIO.cleanup()
 
+def should_replace(str_a, str_b):
+    if len(str_b) < len(str_a):
+        return False
+
+    similar = len(str_a) - sum(
+        map(lambda (x,y): int(x == y), zip(str_a, str_b)))
+    return similar < cfg.REPLACE_THRESHOLD
+
 class BlBot(irc.IRCClient):
     username = cfg.USERNAME
     nickname = cfg.NICKNAME
@@ -69,10 +77,20 @@ class BlBot(irc.IRCClient):
             new = self.ctopic.replace(cfg.O, cfg.C)
 
         if cfg.C not in new and cfg.O not in new:
+            state = cfg.C
             if self.base_open:
-                new = '%s %s' % (cfg.O, self.ctopic)
-            else:
-                new = '%s %s' % (cfg.C, self.ctopic)
+                state = cfg.O
+
+            new = '%s %s' % (state, self.ctopic)
+            if should_replace(state, self.ctopic):
+                tok = state.split()
+                ttok = self.ctopic.split()
+
+                if len(ttok) > len(tok):
+                    new = ' '.join(tok + ttok[len(tok):])
+                else:
+                    new = state
+
             self.describe(cfg.CHAN, 'is disappoint')
 
         if new != self.ctopic:
