@@ -222,7 +222,7 @@ class BlBotWebResource(resource.Resource):
             ]
 
         }
-        return json.dumps(status)
+        return json.dumps(status, indent=2)
 
 if __name__ == '__main__':
     log.startLogging(sys.stdout)
@@ -235,6 +235,6 @@ if __name__ == '__main__':
     else:
         reactor.connectTCP(cfg.SERVER, cfg.PORT, f)
     if cfg.SPACEAPI_ENABLED:
-        reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource()))
+        reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource()), interface='::')
     reactor.addSystemEventTrigger('before', 'shutdown', gpio_cleanup)
     reactor.run()
