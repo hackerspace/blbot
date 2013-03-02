@@ -24,6 +24,21 @@ SERVER = 'irc.freenode.net'
 PORT = 7070
 SSL = True
 
+SPACEAPI_ENABLED = True
+SPACEAPI_PORT = 8080
+SPACE_NAME = 'dolanspace'
+SPACE_WEB = 'http://example.org/'
+SPACE_LOGO = 'http://example.org/logo.png'
+ICON_OPEN = 'http://example.org/open.png'
+ICON_CLOSED = 'http://example.org/closed.png'
+CONTACT_ADDR = 'Odfuknute 48, 66642 Warsaw, Poland'
+CONTACT_IRC = 'irc://freenode/#blbot'
+CONTACT_ML = 'public@lists.exampl.org'
+CONTACT_LAT = 0.0
+CONTACT_LON = 0.0
+FEED_NEWS = 'http://example.org/news.rss'
+FEED_EVENTS = 'http://example.org/events.ics'
+
 try:
     execfile('local_settings.py')
 except:
