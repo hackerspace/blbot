@@ -26,6 +26,7 @@ Requirements:
  - Python 2.7+
  - python-twisted 12.1.0+
  - python-twisted-words 12.1.0+
+ - python-twisted-web
 
 
 Usage:

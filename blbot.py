@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
-import time, sys
+import time, sys, json
 
 from twisted.python import log
 from twisted.words.protocols import irc
+from twisted.web import server, resource
 from twisted.internet import task, reactor, protocol, ssl
 
 import settings as cfg
@@ -13,6 +14,11 @@ try:
     has_gpio = True
 except ImportError:
     print('GPIO not available')
+
+# these should probably go somewhere into the reactor, but i'd have to read the
+# documentation to know where ...
+base_open = False
+last_change = '1337'
 
 def gpio_setup():
     if not has_gpio:
@@ -47,16 +53,20 @@ class BlBot(irc.IRCClient):
     password = cfg.PASSWORD
     ready = False
     ctopic = ''
-    base_open = False
     ticho = 0
+    global base_open, last_change
 
     task = None
     hw_task = None
     topic_task = None
 
     def hw_poll(self, *args, **kwargs):
-        self.base_open = GPIO.input(cfg.GPIO_IN_PIN)
-        if self.base_open:
+        new_state = GPIO.input(cfg.GPIO_IN_PIN)
+        if base_open != new_state:
+            last_change = time.time()
+
+        base_open = new_state
+        if base_open:
             GPIO.output(cfg.GPIO_OUT_PIN, GPIO.HIGH)
         else:
             GPIO.output(cfg.GPIO_OUT_PIN, GPIO.LOW)
@@ -71,14 +81,14 @@ class BlBot(irc.IRCClient):
             print(self.ticho)
             return
 
-        if self.base_open:
+        if base_open:
             new = self.ctopic.replace(cfg.C, cfg.O)
         else:
             new = self.ctopic.replace(cfg.O, cfg.C)
 
         if cfg.C not in new and cfg.O not in new:
             state = cfg.C
-            if self.base_open:
+            if base_open:
                 state = cfg.O
 
             new = '%s %s' % (state, self.ctopic)
@@ -183,6 +193,37 @@ class BlBotFactory(protocol.ClientFactory):
         print("connection failed:", reason)
         reactor.stop()
 
+class BlBotWebResource(resource.Resource):
+    isLeaf = True
+
+    def render_GET(self, request):
+        request.setHeader("Content-Type", "application/json")
+        request.setHeader("Access-Control-Allow-Origin", "*")
+        request.setHeader("Cache-Control", "no-cache")
+        global base_open, last_change
+        status = {
+            'api': '0.12',
+            'space': cfg.SPACE_NAME,
+            'logo': cfg.SPACE_LOGO,
+            'icon': {'open': cfg.ICON_OPEN, 'closed': cfg.ICON_CLOSED},
+            'url': cfg.SPACE_WEB,
+            'address': cfg.CONTACT_ADDR,
+            'contact': {
+                'irc': cfg.CONTACT_IRC,
+                'ml': cfg.CONTACT_ML,
+            },
+            'lat': cfg.CONTACT_LAT,
+            'lon': cfg.CONTACT_LON,
+            'open': base_open,
+            'lastchange': long(last_change),
+            'feeds': [
+                {'name': 'news', 'type': 'application/rss+xml', 'url': cfg.FEED_NEWS},
+                {'name': 'events', 'type': 'text/calendar', 'url': cfg.FEED_EVENTS}
+            ]
+
+        }
+        return json.dumps(status, indent=2)
+
 if __name__ == '__main__':
     log.startLogging(sys.stdout)
     f = BlBotFactory()
@@ -193,5 +234,7 @@ if __name__ == '__main__':
         reactor.connectSSL(cfg.SERVER, cfg.PORT, f , ssl.ClientContextFactory())
     else:
         reactor.connectTCP(cfg.SERVER, cfg.PORT, f)
+    if cfg.SPACEAPI_ENABLED:
+        reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource()), interface='::')
     reactor.addSystemEventTrigger('before', 'shutdown', gpio_cleanup)
     reactor.run()
