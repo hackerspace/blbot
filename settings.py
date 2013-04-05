@@ -3,6 +3,8 @@
 #O = u'space open ♥'
 #C = u'space closed ♡'
 
+HAS_GPIO = False
+
 O = 'space open \\o/'
 C = 'space closed /o\\'
 

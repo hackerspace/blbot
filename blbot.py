@@ -11,8 +11,6 @@ from twisted.internet import task, reactor, protocol, ssl
 
 import settings as cfg
 
-has_gpio = False
-
 IN1 = 32
 IN2 = 33
 OUT1 = 34
@@ -35,7 +33,7 @@ YELLOW = 5
 
 
 def gpio_setup():
-    if has_gpio:
+    if cfg.HAS_GPIO:
         p = subprocess.Popen(['wrap_setup_gpio'])
         p.wait()
 
@@ -365,7 +363,7 @@ if __name__ == '__main__':
     if cfg.SPACEAPI_ENABLED:
         reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource(f)))
 
-    if has_gpio:
+    if cfg.HAS_GPIO:
         pp = GPIOProto(f)
         reactor.spawnProcess(pp, "wrap_wrap_gpio", ["wrap_wrap_gpio"], {})
     reactor.run()
