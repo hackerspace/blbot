@@ -1,5 +1,8 @@
 # -*- coding: utf-8 -*-
-import time, sys, json
+import sys
+import time
+import json
+import subprocess
 
 from twisted.python import log
 from twisted.words.protocols import irc
@@ -9,43 +12,42 @@ from twisted.internet import task, reactor, protocol, ssl
 import settings as cfg
 
 has_gpio = False
-try:
-    import RPi.GPIO as GPIO
-    has_gpio = True
-except ImportError:
-    print('GPIO not available')
 
-# these should probably go somewhere into the reactor, but i'd have to read the
-# documentation to know where ...
-base_open = False
-last_change = '1337'
+IN1 = 32
+IN2 = 33
+OUT1 = 34
+OUT2 = 35
+OUT3 = 37
+
+BELL = IN1
+SWITCH = IN2
+
+DATA = OUT1
+CLOCK = OUT3
+LATCH = OUT2
+
+BASE_RED = 0
+BASE_GREEN = 1
+STATUS_GREEN_1 = 2
+STATUS_GREEN_2 = 3
+RED = 4
+YELLOW = 5
+
 
 def gpio_setup():
-    if not has_gpio:
-        return
-    GPIO.setmode(GPIO.BOARD)
-    GPIO.setup(cfg.GPIO_OUT_PIN, GPIO.OUT)
-    # set up GPIO input with pull-up control
-    #   (pull_up_down be PUD_OFF, PUD_UP or PUD_DOWN, default PUD_OFF)
-    GPIO.setup(cfg.GPIO_IN_PIN, GPIO.IN, pull_up_down=GPIO.PUD_UP)
-    cs = GPIO.input(cfg.GPIO_IN_PIN)
-    if cs:
-        GPIO.output(cfg.GPIO_OUT_PIN, GPIO.HIGH)
-    else:
-        GPIO.output(cfg.GPIO_OUT_PIN, GPIO.LOW)
+    if has_gpio:
+        p = subprocess.Popen(['wrap_setup_gpio'])
+        p.wait()
 
-def gpio_cleanup():
-    if not has_gpio:
-        return
-    GPIO.cleanup()
 
 def should_replace(str_a, str_b):
     if len(str_b) < len(str_a):
         return False
 
     similar = len(str_a) - sum(
-        map(lambda (x,y): int(x == y), zip(str_a, str_b)))
+        map(lambda (x, y): int(x == y), zip(str_a, str_b)))
     return similar < cfg.REPLACE_THRESHOLD
+
 
 class BlBot(irc.IRCClient):
     username = cfg.USERNAME
@@ -54,24 +56,18 @@ class BlBot(irc.IRCClient):
     ready = False
     ctopic = ''
     ticho = 0
-    global base_open, last_change
+    last_state = False
 
     task = None
     hw_task = None
     topic_task = None
-
-    def hw_poll(self, *args, **kwargs):
-        new_state = GPIO.input(cfg.GPIO_IN_PIN)
-        if base_open != new_state:
-            last_change = time.time()
-
-        base_open = new_state
-        if base_open:
-            GPIO.output(cfg.GPIO_OUT_PIN, GPIO.HIGH)
-        else:
-            GPIO.output(cfg.GPIO_OUT_PIN, GPIO.LOW)
+    broadcast_task = None
 
     def poll(self, *args, **kwargs):
+        if self.factory.base_open != self.last_state:
+            self.factory.last_change = time.time()
+            self.last_state = self.factory.base_open
+
         if not self.ready:
             print('not ready')
             return
@@ -81,14 +77,14 @@ class BlBot(irc.IRCClient):
             print(self.ticho)
             return
 
-        if base_open:
+        if self.factory.base_open:
             new = self.ctopic.replace(cfg.C, cfg.O)
         else:
             new = self.ctopic.replace(cfg.O, cfg.C)
 
         if cfg.C not in new and cfg.O not in new:
             state = cfg.C
-            if base_open:
+            if self.factory.base_open:
                 state = cfg.O
 
             new = '%s %s' % (state, self.ctopic)
@@ -106,15 +102,17 @@ class BlBot(irc.IRCClient):
         if new != self.ctopic:
             self.topic(cfg.CHAN, new)
 
+    def poll_broadcast(self, *args, **kwargs):
+        while self.factory.broadcast:
+            msg = self.factory.broadcast.pop()
+            self.describe(cfg.CHAN, msg)
+
     def check_topic(self, *args, **kwargs):
         self.topic(cfg.CHAN)
 
     def connectionMade(self):
         irc.IRCClient.connectionMade(self)
         print('connected')
-        if not self.hw_task and has_gpio:
-            self.hw_task = task.LoopingCall(self.hw_poll, (self,))
-            self.hw_task.start(cfg.HW_POLL_INTERVAL)
 
     def joined(self, channel):
         print('joined %s' % channel)
@@ -126,6 +124,10 @@ class BlBot(irc.IRCClient):
         if not self.topic_task:
             self.topic_task = task.LoopingCall(self.check_topic, (self,))
             self.topic_task.start(cfg.TOPIC_INTERVAL)
+
+        if not self.broadcast_task:
+            self.broadcast_task = task.LoopingCall(self.poll_broadcast, (self,))
+            self.broadcast_task.start(1)
 
     def left(self, channel):
         print('left %s' % channel)
@@ -179,7 +181,13 @@ class BlBot(irc.IRCClient):
         """
         return nickname + 'o'
 
+
 class BlBotFactory(protocol.ClientFactory):
+    def __init__(self):
+        self.base_open = False
+        self.last_change = 1337
+        self.broadcast = []
+
     def buildProtocol(self, addr):
         p = BlBot()
         p.factory = self
@@ -193,14 +201,17 @@ class BlBotFactory(protocol.ClientFactory):
         print("connection failed:", reason)
         reactor.stop()
 
+
 class BlBotWebResource(resource.Resource):
     isLeaf = True
+
+    def __init__(self, irc_factory):
+        self.irc_factory = irc_factory
 
     def render_GET(self, request):
         request.setHeader("Content-Type", "application/json")
         request.setHeader("Access-Control-Allow-Origin", "*")
         request.setHeader("Cache-Control", "no-cache")
-        global base_open, last_change
         status = {
             'api': '0.12',
             'space': cfg.SPACE_NAME,
@@ -214,8 +225,8 @@ class BlBotWebResource(resource.Resource):
             },
             'lat': cfg.CONTACT_LAT,
             'lon': cfg.CONTACT_LON,
-            'open': base_open,
-            'lastchange': long(last_change),
+            'open': self.irc_factory.base_open,
+            'lastchange': long(self.irc_factory.last_change),
             'feeds': [
                 {'name': 'news', 'type': 'application/rss+xml', 'url': cfg.FEED_NEWS},
                 {'name': 'events', 'type': 'text/calendar', 'url': cfg.FEED_EVENTS}
@@ -224,6 +235,122 @@ class BlBotWebResource(resource.Resource):
         }
         return json.dumps(status, indent=2)
 
+
+class GPIOProto(protocol.ProcessProtocol):
+    def __init__(self, irc_factory):
+        self.data = ""
+        self.on = False
+        self.base_open = False
+        self.shiftreg = 0
+        self.bell_count = 0
+        self.irc_factory = irc_factory
+
+    def shift(self, val=None):
+        if not val:
+            val = self.shiftreg
+
+        self.transport.write(
+            "SHIFT %d %d %d %d\n" % (DATA, CLOCK, LATCH, val))
+
+    def base_update(self):
+        if self.base_open:
+            self.shiftreg &= ~(1 << BASE_RED)
+            self.shiftreg |= (1 << BASE_GREEN)
+        else:
+            self.shiftreg &= ~(1 << BASE_GREEN)
+            self.shiftreg |= (1 << BASE_RED)
+
+        self.shift()
+
+    def blink_keep_alive(self):
+        self.shiftreg ^= (1 << STATUS_GREEN_1)
+        self.shift()
+        self.shiftreg ^= (1 << STATUS_GREEN_2)
+        self.shift()
+        self.shiftreg &= ~(1 << STATUS_GREEN_1)
+        self.shift()
+        self.shiftreg &= ~(1 << STATUS_GREEN_2)
+        self.shift()
+
+    def bell_update(self):
+        assert self.bell_count >= 0
+        self.shiftreg &= ~(1 << RED)
+        self.shiftreg &= ~(1 << YELLOW)
+
+        if self.bell_count >= 2:
+            self.shiftreg |= (1 << RED)
+
+        if self.bell_count >= 4:
+            self.irc_factory.broadcast.append('doorbell suckers')
+            self.shiftreg |= (1 << YELLOW)
+        self.shift()
+
+    def clear_bell(self):
+        if self.bell_count == 0:
+            return
+
+        self.bell_count -= 1
+        self.bell_update()
+
+    def connectionMade(self):
+        print "spawned"
+        self.shift(0)
+        self.transport.write('IN %d\n' % BELL)
+        self.transport.write('IN %d\n' % SWITCH)
+        self.transport.write('WATCH %d\n' % IN1)
+        self.transport.write('WATCH %d\n' % IN2)
+
+        self.blink_task = task.LoopingCall(self.blink_keep_alive)
+        self.blink_task.start(3, now=False)
+
+        self.clear_bell_task = task.LoopingCall(self.clear_bell)
+        self.clear_bell_task.start(5, now=False)
+
+    def outReceived(self, data):
+        print data
+        for line in data.splitlines():
+            if 'S' in line:
+                _, pin, state = line.split()
+                if int(pin) == SWITCH:
+                    self.base_open = state == '1'
+                    self.irc_factory.base_open = self.base_open
+                    self.base_update()
+
+            if 'IN2' in data:
+                self.base_open = not self.base_open
+                self.irc_factory.base_open = self.base_open
+                self.base_update()
+
+            if 'IN1' in data:
+                # we receive *EVERY* state change
+                # so for one bell ring we count to 2
+                self.bell_count += 1
+                self.bell_update()
+
+    def errReceived(self, data):
+        pass
+        #print "errReceived! with %d bytes!" % len(data)
+        #print data
+
+    def inConnectionLost(self):
+        print "inConnectionLost! stdin is closed! (we probably did it)"
+
+    def outConnectionLost(self):
+        print "outConnectionLost! The child closed their stdout!"
+        print "out:", self.data
+
+    def errConnectionLost(self):
+        print "errConnectionLost! The child closed their stderr."
+
+    def processExited(self, reason):
+        print "processExited, status %d" % (reason.value.exitCode,)
+
+    def processEnded(self, reason):
+        print "processEnded, status %d" % (reason.value.exitCode,)
+        print "quitting"
+        reactor.stop()
+
+
 if __name__ == '__main__':
     log.startLogging(sys.stdout)
     f = BlBotFactory()
@@ -231,10 +358,14 @@ if __name__ == '__main__':
     gpio_setup()
 
     if cfg.SSL:
-        reactor.connectSSL(cfg.SERVER, cfg.PORT, f , ssl.ClientContextFactory())
+        reactor.connectSSL(cfg.SERVER, cfg.PORT, f, ssl.ClientContextFactory())
     else:
         reactor.connectTCP(cfg.SERVER, cfg.PORT, f)
+
     if cfg.SPACEAPI_ENABLED:
-        reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource()), interface='::')
-    reactor.addSystemEventTrigger('before', 'shutdown', gpio_cleanup)
+        reactor.listenTCP(cfg.SPACEAPI_PORT, server.Site(BlBotWebResource(f)))
+
+    if has_gpio:
+        pp = GPIOProto(f)
+        reactor.spawnProcess(pp, "wrap_wrap_gpio", ["wrap_wrap_gpio"], {})
     reactor.run()
