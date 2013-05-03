@@ -39,6 +39,10 @@ CONTACT_LON = 0.0
 FEED_NEWS = 'http://example.org/news.rss'
 FEED_EVENTS = 'http://example.org/events.ics'
 
+WOL_BROADCAST = '255.255.14.-36'
+WOL_PWD = 'to wiis'
+WOL_HOSTS = {'NAME': 'MAC'}
+
 try:
     execfile('local_settings.py')
 except:

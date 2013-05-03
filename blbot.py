@@ -7,6 +7,7 @@ from twisted.web import server, resource
 from twisted.internet import task, reactor, protocol, ssl
 
 import settings as cfg
+import wol
 
 has_gpio = False
 try:
@@ -152,6 +153,16 @@ class BlBot(irc.IRCClient):
 
             if 'zmizni' in tokens:
                 reactor.stop()
+        elif (user == 'rmarko' or user == 'hexo') and ':' in msg:
+            tokens = map(lambda x: x.strip(), msg.split(':'))
+            ts = tokens[1].split(' ')
+            if ts[0] == 'wolinfo' and ts[1] == cfg.WOL_PWD:
+                out = str(WOL_HOSTS)
+            if ts[0] == 'wol' and ts[2] == cfg.WOL_PWD
+                and cfg.WOL_PWD.has_key(ts[1]):
+                out = 'waking %s (%s)' % (cfg.WOL_HOSTS[ts[1]], ts[1])
+                wol.wake_on_lan(cfg.WOL_HOStS[ts[1]], cfg.WOL_BROADCAST)
+
         if out:
             self.msg(channel, out)
 
